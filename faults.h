@@ -1,5 +1,6 @@
 #pragma once
 #include <limits.h>
+#include <stddef.h>
 #include <stdbool.h>
 
 /*
@@ -9,7 +10,29 @@
  * Version: v0.1.x
  *
  * The current version is NOT thread safe.
+ *
+ * Compilation Flags:
+ *
+ * FAULT_ID_MAX max number of configurable fault_code.
+ *                Default: 128
+ * FAULT_MODULE_MAX max number of configurable fault_module.
+ *                Default: 16
+ * FAULT_LOG_MAX a positive value for the logs queue dimension.
+ *                Default: 1
  */
+
+/* COMPILATION FLAGS */
+#ifndef FAULT_MODULE_MAX
+#define FAULT_MODULE_MAX  16
+#endif
+
+#ifndef FAULT_ID_MAX
+#define FAULT_ID_MAX     128
+#endif
+
+#ifndef FAULT_LOG_MAX
+#define FAULT_LOG_MAX     1
+#endif
 
 /* DO NOT CHANGE THE FOLLOWING VALUES */
 #define FAULT_MODULE_KO      INT_MAX
@@ -35,7 +58,7 @@ enum FaultPolicyType {
     FAULT_POL_NONE,
 
     /* Trigger when the number of faults
-     * are greater than the threshold
+     * are greater than or equals to the threshold
      */
     FAULT_POL_COUNT_ABS,
 
@@ -73,6 +96,18 @@ enum FaultStatusModuleType {
 
 typedef enum FaultStatusModuleType fault_status_module_type;
 
+struct FaultLog {
+    bool saved;   /* the data represent a real log entry */
+    size_t index; /* position in the log history */
+    fault_millisecs timestamp;
+    fault_module module;
+    fault_code code;
+    fault_status_type status;
+    long refValue; /* a user defined reference value for the event */
+};
+
+typedef struct FaultLog FaultLog;
+
 /* External function that must be provided by the user.
  * It must return a monotonicaly increasing value representing
  * the time in milliseconds.
@@ -86,7 +121,7 @@ extern
 fault_millisecs fault_now(void);
 
 /* It must be called at the very beginning of the program */
-void fault_init();
+void fault_init(void);
 
 /* Register a new module that could contains at maximum 'ncodes'
  * different errors/faults.
@@ -180,11 +215,11 @@ bool fault_policy_time_reset(fault_id id,
  * id: the fault reference from fault_getid()
  * ref: a reference value for future inspections
  * condition: true for a fault, false for a valid check.
- * return: the policy output
+ * return: condition
  *
  * If the id does not match, FAULT_GENERIC_UNKNOWN will be used.
  */
-fault_status_type fault_update(fault_id id, long ref, bool condition);
+bool fault_update(fault_id id, long ref, bool condition);
 
 /* Get the number of fault registered in the database.
  * The number depends on the policy, since it can reset it.
@@ -201,4 +236,30 @@ fault_counter fault_count_errors(fault_id id);
  */
 bool fault_reset(fault_id id);
 
-//TODO fault_refval(fault_id id);
+/* Get the reference value of the last error.
+ * It is registered by fault_update() when condition is false.
+ * id: the fault reference from fault_getid()
+ * return: the same value the user send to fault_update()
+ *
+ * If id does not match, zero will be returned.
+ */
+long fault_refval(fault_id id);
+
+/* Empty the logs queue */
+void fault_logs_reset(void);
+
+/* Get the number of logs stored in the logs queue.
+ * return a value less or equals to FAULT_LOG_MAX
+ */
+size_t fault_logs_length(void);
+
+/* Get the log in the queue (history) at position 'index'.
+ * index: the relative position of the log to retrieve.
+ *        0 is the most recent,
+ *        fault_logs_length()-1 is the oldest.
+ *
+ * return: a copy of the log entry with the attribute 'saved' at true
+ *         or a invalid structure with 'saved' at false when the index
+ *         is out of range.
+ */
+FaultLog fault_log(size_t index);

@@ -11,14 +11,6 @@
 #include <string.h>
 #include <assert.h>
 
-#ifndef FAULT_MODULE_MAX
-#define FAULT_MODULE_MAX  16
-#endif
-
-#ifndef FAULT_ID_MAX
-#define FAULT_ID_MAX     128
-#endif
-
 /* Configuration for FAULT_POL_COUNT_ABS */
 struct FaultPolicyCountAbs {
     fault_counter cntWarning;
@@ -97,17 +89,25 @@ struct FaultCounterRecord {
 typedef struct FaultCounterRecord FaultCounterRecord;
 
 /* GLOBAL STUCTURES */
+struct FaultGlobals {
+    /* modules configuration table */
+    FaultModuleRecord modules[FAULT_MODULE_MAX];
+    fault_module modulesLen;
 
-/* modules configuration table */
-static FaultModuleRecord modules[FAULT_MODULE_MAX];
-static fault_module modulesLen = 0;
+    /* faults configuration table */
+    FaultConfRecord config[FAULT_ID_MAX];
+    fault_id configLen;
 
-/* faults configuration table */
-static FaultConfRecord config[FAULT_ID_MAX];
-static fault_id configLen = 0;
+    /* records table, len = configLen */
+    FaultCounterRecord records[FAULT_ID_MAX];
 
-/* records table, len = configLen */
-static FaultCounterRecord records[FAULT_ID_MAX];
+    /* log queue */
+    FaultLog logs[FAULT_LOG_MAX];
+    size_t logsFront;
+    size_t logsLen;
+};
+
+static struct FaultGlobals globals;
 
 /* PROCEDURES */
 
@@ -115,16 +115,46 @@ static FaultCounterRecord records[FAULT_ID_MAX];
 static
 bool fault_id_valid(fault_id id)
 {
-    return (id < configLen);
+    return (id < globals.configLen);
 }
+
+static
+void fault_log_enqueue(const FaultLog log)
+{
+    size_t front = globals.logsFront;
+    size_t len = globals.logsLen;
+    size_t rear = (front + len) % FAULT_LOG_MAX;
+
+    assert(len <= FAULT_LOG_MAX);
+    assert(front + len < 2 * FAULT_LOG_MAX);
+    assert(rear < FAULT_LOG_MAX);
+
+    if (len == FAULT_LOG_MAX){
+        /* queue full */
+        front = (front + 1) % FAULT_LOG_MAX;
+    } else {
+        /* queue not full */
+        len = (len + 1); /* since len < size, no modulo needed*/
+    }
+
+    assert(len <= FAULT_LOG_MAX);
+    assert(front + len < 2 * FAULT_LOG_MAX);
+
+    globals.logs[rear] = log;
+    globals.logs[rear].saved = true;
+    globals.logs[rear].index = rear;
+
+    globals.logsFront = front;
+    globals.logsLen = len;
+}/* fault_log_enqueue */
 
 static
 fault_status_type fault_policy_apply_count_abs(fault_id id)
 {
     /* internal procedure, trust the input */
-    fault_counter warn = config[id].policy.conf.countAbs.cntWarning;
-    fault_counter err = config[id].policy.conf.countAbs.cntError;
-    fault_counter e = records[id].errors;
+    fault_counter warn = globals.config[id].policy.conf.countAbs.cntWarning;
+    fault_counter err = globals.config[id].policy.conf.countAbs.cntError;
+    fault_counter e = globals.records[id].errors;
     fault_status_type s = FAULT_ST_NORMAL;
 
     if (e >= warn){
@@ -141,8 +171,8 @@ static
 fault_status_type fault_policy_apply_count_reset(fault_id id)
 {
     /* internal procedure, trust the input */
-    fault_counter reset = config[id].policy.conf.countReset.cntReset;
-    fault_counter clear = records[id].clear;
+    fault_counter reset = globals.config[id].policy.conf.countReset.cntReset;
+    fault_counter clear = globals.records[id].clear;
 
     if (clear >= reset){
         fault_reset(id);
@@ -155,12 +185,12 @@ static
 fault_status_type fault_policy_apply_time_reset(fault_id id)
 {
     /* internal procedure, trust the input */
-    fault_millisecs warn = config[id].policy.conf.timeReset.msWarning;
-    fault_millisecs err = config[id].policy.conf.timeReset.msError;
-    fault_millisecs reset = config[id].policy.conf.timeReset.msReset;
+    fault_millisecs warn = globals.config[id].policy.conf.timeReset.msWarning;
+    fault_millisecs err = globals.config[id].policy.conf.timeReset.msError;
+    fault_millisecs reset = globals.config[id].policy.conf.timeReset.msReset;
 
-    fault_counter clear = records[id].clear;
-    fault_millisecs last = records[id].msLast;
+    fault_counter clear = globals.records[id].clear;
+    fault_millisecs last = globals.records[id].msLast;
 
     fault_millisecs now = fault_now();
 
@@ -169,8 +199,8 @@ fault_status_type fault_policy_apply_time_reset(fault_id id)
     }
 
     /* calculate the status on the record (coudl be reset) */
-    last = records[id].msLast;
-    fault_millisecs first = records[id].msFirst;
+    last = globals.records[id].msLast;
+    fault_millisecs first = globals.records[id].msFirst;
     fault_millisecs elaps = (last - first);
 
     fault_status_type s = FAULT_ST_NORMAL;
@@ -191,7 +221,7 @@ fault_status_type fault_policy_apply(fault_id id)
     /* private method, the input is trusted */
     fault_status_type s = FAULT_ST_ERROR;
 
-    switch (config[id].policy.type){
+    switch (globals.config[id].policy.type){
     case FAULT_POL_NONE:
         s = FAULT_ST_NORMAL;
         break;
@@ -215,83 +245,97 @@ fault_status_type fault_policy_apply(fault_id id)
     return s;
 }/* fault_policy_apply */
 
-void fault_init()
+/* for internal use only, it does not guarantee the global consistency */
+static
+void fault_modules_reset(void)
 {
-    //TODO split in subprocedures
-
     assert(FAULT_GENERIC_MODULE == 0);
     assert(FAULT_MODULE_MAX > 1);
 
-    /* SETUP MODULES */
     for (fault_module i=0; i < FAULT_MODULE_MAX; i++){
-        modules[i].module = i;
-        modules[i].numCodes = 1;
-        modules[i].confOffset = 0; /* empty module */
-        modules[i].tolerance = FAULT_NO_FAILURE;
+        globals.modules[i].module = i;
+        globals.modules[i].numCodes = 1;
+        globals.modules[i].confOffset = 0; /* empty module */
+        globals.modules[i].tolerance = FAULT_NO_FAILURE;
     }/* for modules */
 
     /* setup the generic module, cannot fail */
-    modules[FAULT_GENERIC_MODULE].module = FAULT_GENERIC_MODULE;
-    modules[FAULT_GENERIC_MODULE].numCodes = FAULT_GENERIC_ALL;
+    globals.modules[FAULT_GENERIC_MODULE].module = FAULT_GENERIC_MODULE;
+    globals.modules[FAULT_GENERIC_MODULE].numCodes = FAULT_GENERIC_ALL;
     /* this is valid just because FAULT_GENERIC_MODULE = 0 */
-    modules[FAULT_GENERIC_MODULE].confOffset = 0;
-    modules[FAULT_GENERIC_MODULE].tolerance = FAULT_NO_FAILURE;
+    globals.modules[FAULT_GENERIC_MODULE].confOffset = 0;
+    globals.modules[FAULT_GENERIC_MODULE].tolerance = FAULT_NO_FAILURE;
 
-    modulesLen = 1; /* one module configured */
+    globals.modulesLen = 1; /* one module configured */
+}/* fault_modules_reset */
 
-    /* SETUP CONFIG */
+/* for internal use only, it does not guarantee the global consistency */
+static
+void fault_config_reset(void)
+{
     for (fault_id i = 0; i < FAULT_ID_MAX; i++){
-        config[i].id = i;
-        config[i].module = FAULT_GENERIC_MODULE;
-        config[i].code = i;
+        globals.config[i].id = i;
+        globals.config[i].module = FAULT_GENERIC_MODULE;
+        globals.config[i].code = i;
         /* cannot fail */
         fault_policy_none(i);
     }/* for config */
 
-    configLen = FAULT_GENERIC_ALL;
+    globals.configLen = FAULT_GENERIC_ALL;
+}/* fault_config_reset */
 
-    /* SETUP RECORDS */
+/* for internal use only, it does not guarantee the global consistency */
+static
+void fault_records_reset(void)
+{
     for (fault_id i = 0; i < FAULT_ID_MAX; i++){
-        records[i].id = i;
+        globals.records[i].id = i;
         fault_reset(i);
     }/* for config */
+}/* fault_records_reset */
 
+void fault_init(void)
+{
+    fault_modules_reset();
+    fault_config_reset();
+    fault_records_reset();
+    fault_logs_reset();
 }/* fault_init () */
 
 fault_module fault_conf_module(fault_counter ncodes, fault_counter tolerance)
 {
-    if (modulesLen >= FAULT_MODULE_MAX){
+    if (globals.modulesLen >= FAULT_MODULE_MAX){
         return FAULT_MODULE_KO;
     }
 
-    if (configLen + ncodes > FAULT_ID_MAX){
+    if (globals.configLen + ncodes > FAULT_ID_MAX){
         return FAULT_MODULE_KO;
     }
 
-    fault_module module = modulesLen;
+    fault_module module = globals.modulesLen;
 
-    assert(modules[module].module == module);
-    assert(configLen == (modules[module-1].confOffset +
-                         modules[module-1].numCodes));
+    assert(globals.modules[module].module == module);
+    assert(globals.configLen == (globals.modules[module-1].confOffset +
+                                 globals.modules[module-1].numCodes));
 
-    modules[module].numCodes = ncodes;
-    modules[module].confOffset = configLen;
-    modules[module].tolerance = tolerance;
-    modulesLen = modulesLen + 1;
+    globals.modules[module].numCodes = ncodes;
+    globals.modules[module].confOffset = globals.configLen;
+    globals.modules[module].tolerance = tolerance;
+    globals.modulesLen = globals.modulesLen + 1;
 
     /* Set a NONE policy to all the new codes, as default */
     for (fault_id i = 0; i < (fault_id)ncodes; i++){
-        fault_id id = configLen + i;
-        assert(config[id].id == id);
+        fault_id id = globals.configLen + i;
+        assert(globals.config[id].id == id);
 
-        config[id].module = module;
-        config[id].code = i;
+        globals.config[id].module = module;
+        globals.config[id].code = i;
 
         /* cannot fail */
         fault_policy_none(id);
     }/* for config */
 
-    configLen = configLen + (fault_id)ncodes;
+    globals.configLen = globals.configLen + (fault_id)ncodes;
 
     return module;
 }/* fault_conf_module */
@@ -302,48 +346,48 @@ bool fault_policy_none(fault_id id)
         return false;
     }
 
-    memset(&config[id].policy, 0, sizeof(FaultPolicy));
-    config[id].policy.type = FAULT_POL_NONE;
+    memset(&globals.config[id].policy, 0, sizeof(FaultPolicy));
+    globals.config[id].policy.type = FAULT_POL_NONE;
 
     return fault_reset(id);
 }/* fault_policy_none */
 
 fault_id fault_getid(fault_module mod, fault_code code)
 {
-    if (mod >= modulesLen){
+    if (mod >= globals.modulesLen){
         return FAULT_GENERIC_UNKNOWN;
     }
 
-    if (code >= modules[mod].numCodes){
+    if (code >= globals.modules[mod].numCodes){
         return FAULT_GENERIC_UNKNOWN;
     }
 
-    return (fault_id)(modules[mod].confOffset + code);
+    return (fault_id)(globals.modules[mod].confOffset + code);
 }/* fault_getid */
 
 fault_status_type fault_status(fault_id id)
 {
-    if (id >= configLen){
+    if (id >= globals.configLen){
         return FAULT_ST_ERROR;
     }
 
-    return records[id].status;
+    return globals.records[id].status;
 }/* fault_status_type */
 
 fault_status_module_type fault_status_module(fault_module mod)
 {
-    if (mod >= modulesLen){
+    if (mod >= globals.modulesLen){
         return FAULT_SM_FAILED;
     }
 
-    assert(modules[mod].module == mod);
+    assert(globals.modules[mod].module == mod);
 
-    fault_counter n = modules[mod].numCodes;
-    fault_id o = modules[mod].confOffset;
-    fault_counter t = modules[mod].tolerance;
+    fault_counter n = globals.modules[mod].numCodes;
+    fault_id o = globals.modules[mod].confOffset;
+    fault_counter t = globals.modules[mod].tolerance;
     fault_id end = (fault_id)(o + n);
 
-    assert(end <= configLen);
+    assert(end <= globals.configLen);
 
     fault_status_module_type s = FAULT_SM_NORMAL;
     fault_counter e = 0;
@@ -354,7 +398,7 @@ fault_status_module_type fault_status_module(fault_module mod)
      * FAILED <= (#errors > tolerance)
      */
     for (fault_id i = o; i < end; i++){
-        switch (records[i].status){
+        switch (globals.records[i].status){
         case FAULT_ST_NORMAL:
             /* empty */
             break;
@@ -383,18 +427,18 @@ fault_status_module_type fault_status_module(fault_module mod)
 }/* fault_status_module_type */
 
 
-fault_status_type fault_update(fault_id id, long ref, bool condition)
+bool fault_update(fault_id id, long ref, bool condition)
 {
     fault_id fid = id;
 
-    if (id >= configLen){
+    if (id >= globals.configLen){
         fid = fault_getid(FAULT_GENERIC_MODULE, FAULT_GENERIC_UNKNOWN);
     }
 
-    assert(records[fid].id == fid);
+    assert(globals.records[fid].id == fid);
     fault_millisecs now = fault_now();
 
-    fault_counter totPrev = records[fid].total;
+    fault_counter totPrev = globals.records[fid].total;
     fault_counter one = 1;
     fault_counter total = 0;
 
@@ -402,56 +446,79 @@ fault_status_type fault_update(fault_id id, long ref, bool condition)
     if (__builtin_add_overflow(totPrev, one, &total)){
         /* the other values are less or equal to total */
         fault_reset(id);
-        records[fid].total += 1;
+        globals.records[fid].total += 1;
     }
 
     if (condition){
-        if (records[fid].errors == 0){
-            records[fid].msFirst = now;
+        if (globals.records[fid].errors == 0){
+            globals.records[fid].msFirst = now;
         }
-        records[fid].errors += 1;
-        records[fid].msLast = now;
-        records[fid].refValue = ref;
-        records[fid].clear = 0; /* interupt the series */
+        globals.records[fid].errors += 1;
+        globals.records[fid].msLast = now;
+        globals.records[fid].refValue = ref;
+        globals.records[fid].clear = 0; /* interupt the series */
     } else {
-        records[fid].clear += 1;
+        globals.records[fid].clear += 1;
     }
 
     /* Must be done after updating the record.
      * The policy can also reset the counters.
      */
-    records[fid].status = fault_policy_apply(fid);
+    globals.records[fid].status = fault_policy_apply(fid);
 
-    return records[fid].status;
+    /* log */
+    FaultLog log = {
+        .saved = false,
+        .index = 0,
+        .timestamp = now,
+        .module = globals.config[fid].module,
+        .code = globals.config[fid].code,
+        .status = globals.records[fid].status,
+        .refValue = globals.records[fid].refValue
+    };
+    fault_log_enqueue(log);
+
+    return condition;
 }/* fault_update */
 
 fault_counter fault_count_errors(fault_id id)
 {
-    if (id >= configLen){
+    if (id >= globals.configLen){
         return 0;
     }
 
-    return records[id].errors;
+    return globals.records[id].errors;
 }/* fault_count_errors */
 
 bool fault_reset(fault_id id)
 {
-    if (id >= configLen){
+    if (id >= globals.configLen){
         return false;
     }
 
-    assert(records[id].id == id);
+    assert(globals.records[id].id == id);
 
-    records[id].errors = 0;
-    records[id].total = 0;
-    records[id].clear = 0;
-    records[id].msFirst = 0;
-    records[id].msLast = 0;
-    records[id].status = FAULT_ST_NORMAL;
-    records[id].refValue = 0;
+    globals.records[id].errors = 0;
+    globals.records[id].total = 0;
+    globals.records[id].clear = 0;
+    globals.records[id].msFirst = 0;
+    globals.records[id].msLast = 0;
+    globals.records[id].status = FAULT_ST_NORMAL;
+    globals.records[id].refValue = 0;
 
     return true;
 }/* fault_reset */
+
+long fault_refval(fault_id id)
+{
+    if (id >= globals.configLen){
+        return 0;
+    }
+
+    assert(globals.records[id].id == id);
+
+    return globals.records[id].refValue;
+}/* fault_refval */
 
 bool fault_policy_count_abs(fault_id id, fault_counter warn, fault_counter err)
 {
@@ -474,9 +541,9 @@ bool fault_policy_count_abs(fault_id id, fault_counter warn, fault_counter err)
         .cntError = err
     };
 
-    memset(&config[id].policy, 0, sizeof(FaultPolicy));
-    config[id].policy.type = FAULT_POL_COUNT_ABS;
-    config[id].policy.conf.countAbs = conf;
+    memset(&globals.config[id].policy, 0, sizeof(FaultPolicy));
+    globals.config[id].policy.type = FAULT_POL_COUNT_ABS;
+    globals.config[id].policy.conf.countAbs = conf;
 
     return fault_reset(id);
 }/* fault_policy_count_abs */
@@ -510,9 +577,9 @@ bool fault_policy_count_reset(fault_id id,
         .cntReset = reset
     };
 
-    memset(&config[id].policy, 0, sizeof(FaultPolicy));
-    config[id].policy.type = FAULT_POL_COUNT_RESET;
-    config[id].policy.conf.countReset = conf;
+    memset(&globals.config[id].policy, 0, sizeof(FaultPolicy));
+    globals.config[id].policy.type = FAULT_POL_COUNT_RESET;
+    globals.config[id].policy.conf.countReset = conf;
 
     return fault_reset(id);
 }/* fault_policy_count_reset */
@@ -546,9 +613,38 @@ bool fault_policy_time_reset(fault_id id,
         .msReset = reset
     };
 
-    memset(&config[id].policy, 0, sizeof(FaultPolicy));
-    config[id].policy.type = FAULT_POL_TIME_RESET;
-    config[id].policy.conf.timeReset = conf;
+    memset(&globals.config[id].policy, 0, sizeof(FaultPolicy));
+    globals.config[id].policy.type = FAULT_POL_TIME_RESET;
+    globals.config[id].policy.conf.timeReset = conf;
 
     return fault_reset(id);
 }/* fault_policy_time_reset */
+
+void fault_logs_reset(void)
+{
+    memset(globals.logs, 0, sizeof(globals.logs));
+    globals.logsFront = 0;
+    globals.logsLen = 0;
+}/* fault_logs_reset */
+
+size_t fault_logs_length(void)
+{
+    assert(globals.logsLen <= FAULT_LOG_MAX);
+    return globals.logsLen;
+}/* fault_logs_length */
+
+FaultLog fault_log(size_t index)
+{
+    FaultLog out = {0};
+    out.saved = false;
+
+    if (index < globals.logsLen){
+        /* reverse order, 0 is the last inserted log */
+        size_t rev = globals.logsLen - index - 1;
+        size_t i = (globals.logsFront + rev) % FAULT_LOG_MAX;
+        out = globals.logs[i];
+        out.index = index;
+    }
+
+    return out;
+}/* fault_log */

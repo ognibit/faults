@@ -56,10 +56,10 @@ void test_policy_none()
     assert(fault_policy_none(fid));
     assert(!fault_policy_none(999));
 
-    assert(fault_update(fid, 1, false) == FAULT_ST_NORMAL);
+    assert(!fault_update(fid, 1, false));
     assert(fault_count_errors(fid) == 0);
 
-    assert(fault_update(fid, 2, true) == FAULT_ST_NORMAL);
+    assert(fault_update(fid, 2, true));
     assert(fault_count_errors(fid) == 1);
 
     assert(fault_status(fid) == FAULT_ST_NORMAL);
@@ -82,19 +82,27 @@ void test_update()
 
     fault_id fid = fault_getid(mod1, MONE_1);
     fault_id fid2 = fault_getid(mod2, MTWO_1);
+    fault_id fidg = fault_getid(FAULT_GENERIC_MODULE, FAULT_GENERIC_UNKNOWN);
 
     assert(!fault_update(99999, 0, false));
-    assert(!fault_update(99999, 0, true));
+    assert(fault_update(99999, 0, true));
+    assert(fault_count_errors(fidg) == 1);
 
-    assert(fault_update(fid, 1, true) == FAULT_ST_NORMAL);
+    assert(fault_update(fid, 1, true));
     assert(fault_count_errors(fid) == 1);
+    assert(fault_refval(fid) == 1);
 
-    assert(fault_update(fid, 2, true) == FAULT_ST_NORMAL);
+    assert(fault_update(fid, 2, true));
     assert(fault_count_errors(fid) == 2);
+    assert(fault_refval(fid) == 2);
 
-    assert(fault_update(fid2, 1, true) == FAULT_ST_NORMAL);
+    assert(fault_update(fid2, 1, true));
     assert(fault_count_errors(fid2) == 1);
+    assert(fault_refval(fid2) == 1);
     assert(fault_count_errors(fid) == 2);
+
+    assert(!fault_update(fid2, 9, false));
+    assert(fault_refval(fid2) == 1);
 
     puts("OK");
 }
@@ -110,14 +118,14 @@ void test_reset()
     fault_id fid = fault_getid(mod1, MONE_1);
     fault_id fid2 = fault_getid(mod2, MTWO_1);
 
-    assert(fault_update(fid, 1, true) == FAULT_ST_NORMAL);
+    fault_update(fid, 1, true);
     assert(fault_count_errors(fid) == 1);
 
-    assert(fault_update(fid, 2, true) == FAULT_ST_NORMAL);
+    fault_update(fid, 2, true);
     assert(fault_count_errors(fid) == 2);
 
     /* control on second module */
-    assert(fault_update(fid2, 1, true) == FAULT_ST_NORMAL);
+    fault_update(fid2, 1, true);
     assert(fault_count_errors(fid2) == 1);
 
     assert(fault_reset(fid));
@@ -144,17 +152,17 @@ void test_policy_count_abs()
     assert(!fault_policy_count_abs(999, 1, 2));
     assert(!fault_policy_count_abs(fid, 2, 1));
 
-    assert(fault_update(fid, 0, false) == FAULT_ST_NORMAL);
+    fault_update(fid, 0, false);
     assert(fault_count_errors(fid) == 0);
     assert(fault_status(fid) == FAULT_ST_NORMAL);
     assert(fault_status_module(mod1) == FAULT_SM_NORMAL);
 
-    assert(fault_update(fid, 1, true) == FAULT_ST_WARNING);
+    fault_update(fid, 1, true);
     assert(fault_count_errors(fid) == 1);
     assert(fault_status(fid) == FAULT_ST_WARNING);
     assert(fault_status_module(mod1) == FAULT_SM_WARNING);
 
-    assert(fault_update(fid, 2, true) == FAULT_ST_ERROR);
+    fault_update(fid, 2, true);
     assert(fault_count_errors(fid) == 2);
     assert(fault_status(fid) == FAULT_ST_ERROR);
     assert(fault_status_module(mod1) == FAULT_SM_FAULTED);
@@ -260,28 +268,28 @@ void test_policy_count_reset()
     assert(!fault_policy_count_reset(fid, 1, 2, 0));
 
     /* as policy count abs */
-    assert(fault_update(fid, 0, false) == FAULT_ST_NORMAL);
+    fault_update(fid, 0, false);
     assert(fault_count_errors(fid) == 0);
     assert(fault_status(fid) == FAULT_ST_NORMAL);
     assert(fault_status_module(mod1) == FAULT_SM_NORMAL);
 
-    assert(fault_update(fid, 1, true) == FAULT_ST_WARNING);
+    fault_update(fid, 1, true);
     assert(fault_count_errors(fid) == 1);
     assert(fault_status(fid) == FAULT_ST_WARNING);
     assert(fault_status_module(mod1) == FAULT_SM_WARNING);
 
-    assert(fault_update(fid, 2, true) == FAULT_ST_ERROR);
+    fault_update(fid, 2, true);
     assert(fault_count_errors(fid) == 2);
     assert(fault_status(fid) == FAULT_ST_ERROR);
     assert(fault_status_module(mod1) == FAULT_SM_FAULTED);
 
     /* reset test */
-    assert(fault_update(fid, 3, false) == FAULT_ST_ERROR);
+    fault_update(fid, 3, false);
     assert(fault_count_errors(fid) == 2);
     assert(fault_status(fid) == FAULT_ST_ERROR);
     assert(fault_status_module(mod1) == FAULT_SM_FAULTED);
 
-    assert(fault_update(fid, 4, false) == FAULT_ST_NORMAL);
+    fault_update(fid, 4, false);
     assert(fault_count_errors(fid) == 0);
     assert(fault_status(fid) == FAULT_ST_NORMAL);
     assert(fault_status_module(mod1) == FAULT_SM_NORMAL);
@@ -305,7 +313,7 @@ void test_policy_time_reset()
 
     /* 0 */
     mockTime = 0;
-    assert(fault_update(fid, 0, false) == FAULT_ST_NORMAL);
+    fault_update(fid, 0, false);
     assert(fault_count_errors(fid) == 0);
     assert(fault_status(fid) == FAULT_ST_NORMAL);
     assert(fault_status_module(mod1) == FAULT_SM_NORMAL);
@@ -314,7 +322,7 @@ void test_policy_time_reset()
      *  S
      */
     mockTime = 1;
-    assert(fault_update(fid, 1, true) == FAULT_ST_NORMAL);
+    fault_update(fid, 1, true);
     assert(fault_count_errors(fid) == 1);
     assert(fault_status(fid) == FAULT_ST_NORMAL);
 
@@ -322,7 +330,7 @@ void test_policy_time_reset()
      *  S
      */
     mockTime = 2;
-    assert(fault_update(fid, 2, true) == FAULT_ST_NORMAL);
+    fault_update(fid, 2, true);
     assert(fault_count_errors(fid) == 2);
     assert(fault_status(fid) == FAULT_ST_NORMAL);
 
@@ -338,7 +346,7 @@ void test_policy_time_reset()
      *  S
      */
     mockTime = 4;
-    assert(fault_update(fid, 4, false) == FAULT_ST_NORMAL);
+    fault_update(fid, 4, false);
     assert(fault_count_errors(fid) == 2);
     assert(fault_status(fid) == FAULT_ST_NORMAL);
 
@@ -347,7 +355,7 @@ void test_policy_time_reset()
      *  warning: it is passed more than 4 ms since the first error
      */
     mockTime = 5;
-    assert(fault_update(fid, 5, true) == FAULT_ST_WARNING);
+    fault_update(fid, 5, true);
     assert(fault_count_errors(fid) == 3);
     assert(fault_status(fid) == FAULT_ST_WARNING);
 
@@ -355,7 +363,7 @@ void test_policy_time_reset()
      *  S   WE
      */
     mockTime = 6;
-    assert(fault_update(fid, 6, true) == FAULT_ST_ERROR);
+    fault_update(fid, 6, true);
     assert(fault_count_errors(fid) == 4);
     assert(fault_status(fid) == FAULT_ST_ERROR);
 
@@ -363,7 +371,7 @@ void test_policy_time_reset()
      *  S   WE
      */
     mockTime = 7;
-    assert(fault_update(fid, 7, false) == FAULT_ST_ERROR);
+    fault_update(fid, 7, false);
     assert(fault_count_errors(fid) == 4);
     assert(fault_status(fid) == FAULT_ST_ERROR);
 
@@ -371,7 +379,7 @@ void test_policy_time_reset()
      *  S   WE
      */
     mockTime = 8;
-    assert(fault_update(fid, 8, false) == FAULT_ST_ERROR);
+    fault_update(fid, 8, false);
     assert(fault_count_errors(fid) == 4);
     assert(fault_status(fid) == FAULT_ST_ERROR);
 
@@ -380,9 +388,83 @@ void test_policy_time_reset()
      *  reset: 3 ms of good event only
      */
     mockTime = 9;
-    assert(fault_update(fid, 9, false) == FAULT_ST_NORMAL);
+    fault_update(fid, 9, false);
     assert(fault_count_errors(fid) == 0);
     assert(fault_status(fid) == FAULT_ST_NORMAL);
+
+    puts("OK");
+}
+
+void test_logs(void)
+{
+    printf("test_logs: ");
+
+    fault_init();
+    fault_module mod1 = fault_conf_module(MONE_ALL, 1);
+
+    fault_id fid1 = fault_getid(mod1, MONE_1);
+    fault_id fid2 = fault_getid(mod1, MONE_2);
+
+    fault_policy_count_abs(fid1, 1, 2);
+    fault_policy_count_abs(fid2, 1, 2);
+
+    assert(fault_logs_length() == 0);
+
+    mockTime = 100;
+    fault_update(fid1, 1, true);
+
+    assert(fault_logs_length() == 1);
+    assert(fault_log(0).saved);
+    assert(fault_log(0).index == 0);
+    assert(fault_log(0).timestamp == 100);
+    assert(fault_log(0).module == mod1);
+    assert(fault_log(0).code == MONE_1);
+    assert(fault_log(0).status == FAULT_ST_WARNING);
+    assert(fault_log(0).refValue == 1);
+
+    mockTime = 101;
+    fault_update(fid1, 2, true);
+
+    assert(fault_logs_length() == 2);
+    assert(fault_log(0).saved);
+    assert(fault_log(0).index == 0);
+    assert(fault_log(0).timestamp == 101);
+    assert(fault_log(0).module == mod1);
+    assert(fault_log(0).code == MONE_1);
+    assert(fault_log(0).status == FAULT_ST_ERROR);
+    assert(fault_log(0).refValue == 2);
+
+    assert(fault_log(1).saved);
+    assert(fault_log(1).index == 1);
+    assert(fault_log(1).timestamp == 100);
+    assert(fault_log(1).module == mod1);
+    assert(fault_log(1).code == MONE_1);
+    assert(fault_log(1).status == FAULT_ST_WARNING);
+    assert(fault_log(1).refValue == 1);
+
+    mockTime = 102;
+    fault_update(fid1, 3, true);
+
+    assert(FAULT_LOG_MAX == 2);
+    assert(fault_logs_length() == 2);
+    assert(fault_log(0).saved);
+    assert(fault_log(0).index == 0);
+    assert(fault_log(0).timestamp == 102);
+    assert(fault_log(0).module == mod1);
+    assert(fault_log(0).code == MONE_1);
+    assert(fault_log(0).status == FAULT_ST_ERROR);
+    assert(fault_log(0).refValue == 3);
+
+    assert(fault_log(1).saved);
+    assert(fault_log(1).index == 1);
+    assert(fault_log(1).timestamp == 101);
+    assert(fault_log(1).module == mod1);
+    assert(fault_log(1).code == MONE_1);
+    assert(fault_log(1).status == FAULT_ST_ERROR);
+    assert(fault_log(1).refValue == 2);
+
+    fault_logs_reset();
+    assert(fault_logs_length() == 0);
 
     puts("OK");
 }
@@ -397,5 +479,6 @@ int main()
     test_status_module();
     test_policy_count_reset();
     test_policy_time_reset();
+    test_logs();
     return 0;
 }/* main */
